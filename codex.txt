@@ -696,3 +696,96 @@ push: 成功 —— git push origin main（b10a317..e487276）
 2. 若用户需要，再把受控 A/B 测试脚本也补进 `ovh优化/`（当前按用户选择未收录）。
 
 
+================================================================================
+时间：2026-10-16 18:20
+版本：v0.1.1（第五轮补充——真机验证 + 回滚语义修复）
+================================================================================
+
+【用户需求】
+第五轮交付后用户回复「继续」，即执行第五轮遗留的下一步：到真机验证脚本。
+
+【产品经理】
+- 交付物已入库，但「无法在 Windows 真跑」是最大遗留风险；本轮目标就是把风险降到最低：
+  能只读验证的全部在真机只读验证；必须写入的只做「幂等、零回归」的那一档；
+  高风险档（装内核 + 重启 + 回滚去调优）明确标注需一次性主机，绝不拿生产机冒险。
+- 顺带把验证过程中暴露的真实缺陷修掉，而不是只写进文档。
+
+【首席架构师】
+- 真机 = OVH Debian 13 trixie x86_64，内核已是 6.18.57-x64v2-xanmod1（BBRv3），
+  1 vCPU / 455MB RAM / ens3，跑着 yjl-argo + xboard-node + cloudflared 隧道（4 条连接在线）。
+- 接入方式：paramiko over SSH（口令从本机临时凭据文件读，不出现在命令行/仓库）。
+- 验证分层：① 只读（status / 全 dry-run）→ ② 幂等写入（--step net）→ ③ 高风险（内核档/回滚），③ 不做。
+
+【资深研发】
+- 真机暴露并修复一个真实 Bug：`restore.sh` 原先取「最新」备份（`sort | tail -1`），
+  在「已调优的机器上重跑 step_net」时会生成一份「orig 值=已调优值」的备份，
+  导致真回滚恢复的是调优值——回滚语义被污染。
+  修复：改为取「最早（首次）」备份（`sort | head -1`），那才是真正的调优前状态。
+  涉及 3 处：`generate_restore_script` heredoc、`rollback_net` 内联回滚、`rollback_net` 的 dry-run 文案。
+- 同步修正现场已生成的 `/root/net-tuning/restore.sh`（sed，先备份为 restore.sh.bak-*），保持机器与仓库一致。
+
+【测试】
+- 本机（Windows）：`bash -n ovh优化/ovh优化.sh` → SYNTAX_OK；
+  备份选择逻辑单测（模拟两个备份目录）→ PASS：回滚取首次 backup-20261016-143725。
+- 本机**无法**跑 `tests/test.sh`：git-bash 下 `install -d -m 700` 报
+  「cannot change permissions ... Permission denied」，属 Windows ACL 环境限制（与本次改动无关，已用最小用例复现）。
+- 因此把仓库测试套件搬到真机 Linux 上跑（隔离在 /tmp，跑完清理）：
+  `uname: Linux 6.18.57-x64v2-xanmod1 x86_64 / bash 5.2.37 / euid=0` →
+  `All YJL Argo tests passed.`（exit 0）。
+
+【本次修改】
+1. `ovh优化/ovh优化.sh`：回滚取备份由「最新」改为「最早（首次）」（3 处）。
+2. `ovh优化/README.md`：安全设计一节补充「回滚取首次备份」的说明与原因。
+3. 现场 `/root/net-tuning/restore.sh`：同源修正（已备份）。
+
+【测试环境】
+- 真机：OVH Debian 13 trixie x86_64，6.18.57-x64v2-xanmod1，1 vCPU / 455MB / ens3
+- 开发机：Windows + git-bash（仅能跑 bash -n 与纯逻辑用例）
+
+【测试命令】
+  真机只读：
+    bash /tmp/ovh-yjl.sh --step status
+    bash /tmp/ovh-yjl.sh --dry-run --step net|kernel|grub|prereboot
+    bash /tmp/ovh-yjl.sh --dry-run --step rollback --rollback net|kernel
+  真机幂等写入：
+    bash /tmp/ovh-yjl.sh --step net --yes
+  真机测试套件：
+    tar xzf /tmp/yjl-suite.tgz -C /tmp/yjl-suite && bash /tmp/yjl-suite/tests/test.sh
+
+【测试结果】PASS（只读 + 幂等写入 + 仓库测试套件）
+1) 自动探测在真机全部正确：网卡 ens3、CPU 等级 v2、目标包 linux-xanmod-lts-x64v2、代号 trixie。
+2) `--step status` 读出的 19 项 sysctl 与真机当前生效值**逐项一致**；
+   swap / 服务（yjl-argo、xboard-node、ssh 全 active）/ 隧道 4 条连接 / grubenv 均正确读出。
+3) GRUB 菜单项 ID 动态提取正确：得到 `gnulinux-6.18.57-x64v2-xanmod1-advanced-9db4b794-...`，
+   与真机 grubenv 的 saved_entry 完全一致。
+4) dry-run（net/kernel/grub/prereboot/rollback）全部正确打印计划，未改动系统。
+5) `--step net --yes` 幂等写入路径实测通过：
+   正常建备份、重写 sysctl/模块文件、swap 已存在则跳过、modprobe 成功、sysctl --system 应用、
+   对 ens3 应用 fq、生成 restore.sh。
+   前后对比：cc=bbr / qdisc=fq / ecn=2 / swap /swapfile / 隧道 4 条 / 服务全 active **无变化**，
+   **隧道未被弄断**。
+
+【发现的问题】
+1. 回滚语义被污染（取最新备份）——已在代码 + 现场修复。
+2. 真机 sysctl 文件 md5 因表头文案变化而变化（值不变，功能一致，无影响）。
+3. Windows 开发机无法跑仓库测试套件（git-bash chmod 限制）——改到真机 Linux 跑，PASS。
+
+【修复】
+- 见【本次修改】；现场多余备份目录 backup-20261016-181031 已删除，恢复唯一原始备份 backup-20261016-143725；
+  /tmp 上传物已清理，机器恢复原状。
+
+【未解决 / 未覆盖】
+- 内核档（step_kernel / grub 安全网 / prereboot / 重启 / promote）**未在真机执行**：
+  会重装内核并重启，风险高，且该机正在生产使用。需在一次性/可弃用的 Debian 13 x86_64 主机上验证。
+- 真回滚（会 swapoff 去掉内存保险、且会“去调优”）未在真机执行；真机 swap 使用 0B，风险低但仍不做。
+- 服务器口令仍未更换（第四轮遗留，与本次无关）。
+
+【Git】
+commit: （本次提交：修复回滚取备份逻辑 + README 说明 + codex 回填）
+push: 见下
+
+【下一步】
+1. 若用户同意，找一台可弃用 Debian 13 x86_64 主机，完整验证内核档、GRUB 安全网、重启自动回退与真回滚。
+2. 可选：把受控 A/B 测试脚本补进 `ovh优化/`。
+
+

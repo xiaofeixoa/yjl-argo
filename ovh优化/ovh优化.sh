@@ -358,9 +358,11 @@ generate_restore_script() {
 # 一键回滚网络调优（第 1 步的全部改动）
 set -u
 WORK=/root/net-tuning
-BK=$(ls -1d "$WORK"/backup-* 2>/dev/null | sort | tail -1)
+# 取“最早（首次）”的备份：那才是调优前的原始状态。
+# 注意：在已调优的机器上重跑 step_net 会再建备份，若取“最新”会污染回滚语义。
+BK=$(ls -1d "$WORK"/backup-* 2>/dev/null | sort | head -1)
 [ -n "$BK" ] || { echo "找不到备份目录 $WORK/backup-*"; exit 1; }
-echo "使用备份: $BK"
+echo "使用备份(首次): $BK"
 [ "$(id -u)" -eq 0 ] || { echo "请用 root 运行"; exit 1; }
 
 echo "--- 1) 移除 sysctl / 模块配置文件 ---"
@@ -973,7 +975,7 @@ rollback_net() {
   head1 "回滚网络参数（sysctl / fq / swap）"
   if [ "$DRY_RUN" -eq 1 ]; then
     dry "将删除 $SYSCTL_FILE 与 $MODULE_FILE"
-    dry "将按最近一次 $WORK/backup-* 恢复原 sysctl 值，队列恢复 fq_codel"
+    dry "将按最早一次（首次）$WORK/backup-* 恢复原 sysctl 值，队列恢复 fq_codel"
     dry "将 swapoff + 删除 $SWAPFILE + 移除 /etc/fstab 条目"
     return 0
   fi
@@ -984,7 +986,7 @@ rollback_net() {
     return $?
   fi
   # 没有 restore.sh 时内联回滚
-  local BK; BK=$(ls -1d "$WORK"/backup-* 2>/dev/null | sort | tail -1)
+  local BK; BK=$(ls -1d "$WORK"/backup-* 2>/dev/null | sort | head -1)
   [ -n "$BK" ] || { err "找不到备份目录 $WORK/backup-*，无法恢复原值"; return 1; }
   rm -f "$SYSCTL_FILE" "$MODULE_FILE"
   local line k v
