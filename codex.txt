@@ -574,11 +574,21 @@ PASS（功能与稳定性）；**性能：无可测出的提升（如实记录�
 - Alpine/ARM64 仍未覆盖（本轮主机是 Debian 13 / x86_64）。
 
 【Git】
-commit: 见下一次回填
-push:
+commit: 05c0f8a docs: 记录第四轮宿主机网络栈调优（BBRv3 + sysctl + swap）与受控 A/B 实测结论
+push: 成功 —— git push origin main（0d3f180..05c0f8a）
+      远端 HEAD = 05c0f8a（与本地一致，工作区干净）
+
+【远端独立复核（从服务器干净网络经 GitHub raw 重新拉取，非本地文件）】
+- 可达性：codex.txt / 使用说明.md / 设计.md / 框架.txt / README.md / launch.sh /
+  yjl-argo.sh / install.sh / SHA256SUMS / .gitignore 均 200；AGENTS.md 为 404（敏感文件仍不在库）
+- 敏感扫描（扫描对象 = 远端实际内容，命中全部为 0）：
+  服务器公网 IP / SSH 端口 / 服务器口令 / 隧道域名 / 真实 Tunnel Token / 私网 10.x 地址
+- 完整性独立复核：用远端 SHA256SUMS 校验远端实际下载件 →
+  yjl-argo.sh / install.sh / launch.sh / tests/test.sh / tests/fake-cloudflared.sh 全部 OK（5/5）
+- 本地回归：`bash tests/test.sh` → All YJL Argo tests passed；
+  `bash -n`/`sh -n` 全部 exit 0；`sha256sum -c SHA256SUMS` → 5/5 OK；全部文件 LF
 
 【下一步】
-1. 回填本轮提交哈希与远端复核结果。
-2. 提醒并跟进用户更换服务器口令。
-3. 若日后真的遇到"高丢包长 RTT"业务，可在那时补测 BBR 与缓冲的收益，用真实数据替换理论推断。
+1. 提醒并跟进用户更换服务器口令（唯一遗留的安全项）。
+2. 若日后真的遇到"高丢包长 RTT"业务，可在那时补测 BBR 与缓冲的收益，用真实数据替换理论推断。
 
