@@ -682,8 +682,14 @@ push: 成功 —— git push origin main（0d3f180..05c0f8a）
 - 服务器口令仍未更换（第四轮遗留，与本次无关）。
 
 【Git】
-commit:（本次提交见下）
-push:（待推送）
+commit: e487276（feat: 新增 ovh优化 目录，把第四轮宿主机调优固化为可复现脚本）
+push: 成功 —— git push origin main（b10a317..e487276）
+      远端 HEAD = e487276（与本地一致，工作区干净；脚本 mode=100755）
+
+【远端独立复核（经 GitHub raw 重新拉取，非本地文件）】
+- 可达性：ovh优化/README.md / ovh优化/ovh优化.sh / codex.txt 均 200
+- 敏感扫描（对远端实际内容）：口令 / token / yjl-ssh-cred 命中数全部为 0；
+  脚本内 IPv4 仅 1.1.1.1（Cloudflare DNS 延迟目标）与 127.0.0.1（回环回源检查），无服务器公网 IP
 
 【下一步】
 1. 在真实 Debian 13 主机上回归一遍 `ovh优化.sh`（至少 --dry-run 全步骤 + 菜单 2 档 1 实跑 + 回滚）。
