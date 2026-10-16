@@ -221,7 +221,9 @@ push: 成功推送至 https://github.com/xiaofeixoa/yjl-argo（main）
 
 【修复】
 1. `git rm --cached AGENTS.md`，并在 .gitignore 增加 AGENTS.md / CLAUDE.md / .codex/；
-   随后对全部历史做 filter-branch 清除该文件，再 force push。
+   随后对全部历史做 filter-branch 清除该文件，清理 refs/original + reflog + gc，
+   再 `git push --force`。已复核：全历史 blob 扫描无口令/Token/服务器 IP 命中，
+   raw.githubusercontent.com/main/AGENTS.md 返回 404。
    同时必须提醒用户：公开仓库的口令应视为已泄漏，请立即改密。
 2. launch.sh 改为：无 --source 且无 curl 时，root 就自动装 curl，非 root 直接给出可操作提示。
 3. 换行符检查手段改为 tr/od 权威判定；并保留 .gitattributes `* text=auto eol=lf`。
@@ -244,8 +246,37 @@ push: 成功推送至 https://github.com/xiaofeixoa/yjl-argo（main）
 - 如需彻底清除 GitHub 上的历史缓存，可联系 GitHub Support 请求清理不可达对象。
 
 【Git】
-commit: 4a17eb2 / bf2028d / 6027722（第一轮，已推送，历史中仍含 AGENTS.md，本轮回溯清除）
-        本轮回溯 + force push 后，远端 main 不再包含 AGENTS.md。
+第一轮（已推送，历史含 AGENTS.md）：
+  4a17eb2 chore: 从 dandan-tui 抽取 yjl-argo 为独立工程
+  bf2028d docs: 回填首次提交哈希与验证结果到 codex.txt
+  6027722 docs: 记录 GitHub 推送尝试与网络阻塞情况
+第二轮（安全回溯后重写，已 force push）：
+  83172a0 chore: 从 dandan-tui 抽取 yjl-argo 为独立工程
+  163a169 docs: 回填首次提交哈希与验证结果到 codex.txt
+  6d70630 docs: 记录 GitHub 推送尝试与网络阻塞情况
+  21b2e61 feat: 新增 launch.sh 一行安装与 yjl configure 非交互配置
+push: 成功 —— git push --force origin main
+      远端 HEAD = 21b2e61c6df885bc2260035ae180d521cdee24ae（与本地一致）
+      注意：旧提交（含 AGENTS.md 的那三个）在 GitHub 上变为不可达对象，
+      可能仍能按 SHA 直接访问一段时间；如需彻底清除请找 GitHub Support。
+
+【在线一行安装实测（真实网络，2026-10-16）】
+命令：NO_COLOR=1 bash launch.sh --dry-run （不带 --source，真实访问 GitHub）
+输出：
+  来源：https://raw.githubusercontent.com/xiaofeixoa/yjl-argo/main
+  下载 yjl-argo.sh / install.sh / SHA256SUMS
+  [成功] SHA256 校验通过：yjl-argo.sh
+  [成功] SHA256 校验通过：install.sh
+  [成功] dry-run 完成
+结论：PASS —— 一行安装的「下载 + 完整性校验」链路对真实远端可用，
+      仓库内 SHA256SUMS 与远端实际文件逐字节匹配。
+
+远端文件可达性复查（raw.githubusercontent.com）：
+  AGENTS.md                 -> 404（敏感文件已清除）
+  launch.sh                 -> 200
+  SHA256SUMS                -> 200
+  scripts/regen-sha256sums.sh -> 200
+  yjl-argo.sh               -> 200
 
 【下一步】
 1. 用户在 Bettbox 中把测试服务器 IP 设为直连（或临时关 TUN），然后重跑：
