@@ -285,3 +285,135 @@ push: 成功 —— git push --force origin main
 2. 在 OVH 服务器上起一个本地 HTTP 服务（业务端口段 10301–10309）作为真实回源目标，做端到端验证。
 3. 视需要在 Alpine 上补一次 OpenRC 场景测试。
 
+================================================================================
+时间：2026-10-16（第三轮·真实 Linux 主机端到端验证）
+版本：v0.1.0
+================================================================================
+
+【用户需求】
+1) 用户已在自己 VPN（Bettbox）中为测试机 IP 添加直连规则，网络恢复，要求继续完成真实服务器端到端验证。
+2) 附带要求：在该服务器上再安装 cedar2025/xboard-node（machine 模式：panel + token + machine-id）。
+
+【测试环境（真实）】
+- 主机：用户提供的 OVH 云服务器（公网 IP 与 SSH 端口不入库，避免公开仓库泄漏）
+- 系统：Debian GNU/Linux 13 (trixie)，x86_64，内核 6.12.107+deb13-cloud-amd64
+- init：systemd 257 (257.13-1~deb13u1)；无 OpenRC
+- 身份：root；内存 464MiB；根分区 9.8G（可用 8.0G）
+- 出网：raw.githubusercontent.com 200、github.com releases 302，均正常
+- 依赖：curl / sha256sum / shasum / openssl / bash / python3 / systemd-cat 全部就位
+- 环境干净：无历史 yjl、无 /etc/yjl-argo、无 cloudflared、10301–10309 端口空闲
+- DNS 为 1.1.1.1 / 8.8.8.8，真实 IP，无 fake-IP 干扰
+- 访问方式：paramiko 5.0.0 over SSH（口令从本机临时凭据文件读取，未出现在命令行中）
+
+【测试命令（真实一行安装，未做任何改写）】
+    bash <(curl -fsSL https://raw.githubusercontent.com/xiaofeixoa/yjl-argo/main/launch.sh) \
+      --target http://127.0.0.1:10301 \
+      --mode token \
+      --hostname <自有域名> \
+      --path <路径>
+（Token 通过 YJL_ARGO_TOKEN 环境变量注入，未出现在命令行与脚本内容中）
+
+【测试结果】PASS
+
+一、一行安装链路
+| 环节 | 实测结果 |
+| --- | --- |
+| 下载 launch.sh / yjl-argo.sh / install.sh / SHA256SUMS | PASS（raw.githubusercontent.com 200） |
+| SHA256 逐文件校验 | PASS（[成功] SHA256 校验通过：yjl-argo.sh / install.sh） |
+| 复用 install.sh 安装 | PASS |
+| 自动 apt 安装依赖 + 下载 cloudflared | PASS（cloudflared 2026.10.1，38.3MB，来自 GitHub releases） |
+| 写配置 / 写路由清单 / 写 systemd 单元 | PASS |
+| systemctl enable + 启动 | PASS（enabled / active） |
+| 非交互 configure 参数校验 | PASS（--mode bogus → exit 2；--mode token 缺 token → exit 2） |
+
+二、安装产物与权限位（真机 stat 实测）
+| 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| /usr/local/bin/yjl | lrwxrwxrwx → /usr/local/lib/yjl-argo/yjl-argo.sh | 软链正确 |
+| /usr/local/lib/yjl-argo/yjl-argo.sh | -rwxr-xr-x (755) | 主程序 |
+| /etc/yjl-argo/ | drwx------ (700) | 目录 |
+| /etc/yjl-argo/config.env | -rw------- (600) root:root | 含 Token，权限正确 |
+| /etc/yjl-argo/routes.tsv | -rw------- (600) root:root | 入口清单 |
+| /var/log/yjl-argo.log | -rw------- (600) | 日志 |
+| /usr/local/bin/cloudflared | -rwxr-xr-x (755) | 内核 |
+
+三、systemd 单元（systemctl cat 实测，与设计一致）
+    [Service]
+    Type=simple
+    ExecStart=/usr/local/bin/yjl run
+    Restart=always
+    RestartSec=5
+    NoNewPrivileges=true
+    [Install]
+    WantedBy=multi-user.target
+- `systemctl restart yjl-argo` 后自动恢复：PASS（重启后重新注册 4 条连接，公网仍通）
+
+四、隧道连通性（真实）
+- 4 条连接全部注册成功：ams13 / ams19 / ams07 / ams18，协议 http2
+  `INF Registered tunnel connection connIndex=0..3 ... location=ams13/ams19/ams07/ams18 protocol=http2`
+- 连通性预检（precheck）：全部 pass（TCP Connectivity / Cloudflare API / Cloudflare Dashboard）
+- 公网 error code 1033（无连接器）问题消失
+
+五、真实端到端（本次最关键的验证）
+回源侧用真实 VLESS + WebSocket + TLS 服务（xboard-node 的 27272 入口，自签证书 CN=<自有域名>）。
+- 本机 TLS 探测：`openssl s_client -connect 127.0.0.1:27272` → CONNECTION ESTABLISHED，TLSv1.3，
+  Peer certificate CN=<自有域名>，协商组 X25519MLKEM768
+- 带标记的临时 HTTP 回源做链路证明：公网响应体里读到源站自己回显的 Cloudflare 头，
+  `cf-ray` 与 Cloudflare 边缘返回的 `cf-ray` **完全一致**（例如 a4b4180e3a4b662c-AMS），
+  `cf-connecting-ip` 分别为服务器公网 IP 与我的出口 IP —— 证明「公网 → Cloudflare → 隧道 → cloudflared → 源站」全链打通
+- 换成真实 VLESS 回源后的无凭证验证：
+  `curl --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+      -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' https://<自有域名>/<路径>`
+  → 公网返回 **HTTP/1.1 101 Switching Protocols**（curl exit 28 是 WS 长连接保持，属预期）
+- xboard-node 侧：`[vless:27272] started, 2 users`，`xbctl list` 显示 machine_id=11 / active / ok，
+  本地健康检查 `http://127.0.0.1:65530/healthz` → `{"status":"ok"}`
+
+六、附带任务：安装 cedar2025/xboard-node（machine 模式）
+- 先审计安装脚本（远程管道进 bash 有风险）：确认只写 /etc/xboard-node、/usr/local/bin/xboard-node、
+  /usr/local/bin/xbctl、xboard-node.service，且只 apt 安装 curl/wget/ca-certificates，不与 yjl-argo 冲突
+- 执行前先探测面板可达（HTTP 200）
+- 安装结果：PASS（service enabled/active，节点 24「法国-ovh」正常启动，2 个用户）
+- 与 yjl-argo 互不影响：两个服务同时 enabled + active，公网入口正常
+
+【发现的问题】
+1. 【文档行为被真实复现】Token 模式下 **Dashboard 远端 ingress 优先于本地 `--target`**。
+   本次 `--target` 传的是 `http://127.0.0.1:10301`，而 Dashboard 配的是 `https://localhost:27272`，
+   cloudflared 日志明确报：
+     `ERR error="Unable to reach the origin service ... dial tcp [::1]:27272: connect: connection refused" ... originService=https://localhost:27272`
+   公网返回 502。这正是 README / 使用说明里写的「远端规则优先」，此前只有静态断言，本轮拿到真机证据。
+2. 【测试自身造成的故障】我最初在 10301 / 27272 上起的临时回源占住了 27272，
+   导致 xboard-node 的 vless 内核启动失败：`listen tcp 0.0.0.0:27272: bind: address already in use`。
+   已定位并清理（见下）。
+3. 【表现层】`yjl status` 的公网健康检查按 HTTP 语义判断，回源是 VLESS/WS 时必然显示 400 / 405 / 000，
+   容易误判为故障。已写入使用说明故障排查表与 FAQ。
+4. 【HTTP/2 陷阱】对隧道发 WebSocket 升级时，若 curl 协商到 HTTP/2 会得到
+   `400 handshake error: bad "Upgrade" header`（h2 无 Upgrade 语义），需 `--http1.1`。已写入文档。
+5. 本机（Windows）到测试机 27272 的 TLS 探测拿到 EOF，而服务器自身探测正常 ——
+   再次印证本机 TUN 环境下裸探测结果不可信，验证必须以服务器侧或外部视角为准。
+
+【修复】
+1. 清掉我起的临时回源进程与文件（/srv/yjl-test*、/var/log/yjl-test-origin*），释放 27272；重启 xboard-node：
+   `[vless:27272] started, 2 users`（从失败 → 成功）。
+2. 用真实回源重跑 `yjl configure --target https://localhost:27272 ...`，让本机记录与 Dashboard 一致
+   （`yjl status` 显示 `[成功] 本地目标可连通：https://localhost:27272`）。
+3. 使用说明.md：新增故障排查行（非 HTTP 回源）+ 两条 FAQ（非 HTTP 回源的健康检查语义 /
+   `--target` 与 Dashboard 冲突时以谁为准）。
+4. 清理服务器上全部临时敏感件：`/tmp/yjl-token`（已 shred）、`/tmp/yjl-test-*.sh`、`/tmp/xboard-install.sh`。
+   服务器 /tmp 已复核无残留。
+
+【未解决 / 仍未覆盖】
+- Alpine + OpenRC 场景仍**未**在真机验证（本轮主机是 Debian 13 / systemd 257）。
+- ARM64 未验证（本轮主机是 x86_64）。
+- 菜单交互路径（`yjl` → 1/2/3/4/5/6）本轮未做人工点选，只验证了 status / configure / run 的非交互路径。
+- 【安全】此前泄漏的服务器口令仍需用户自行更换；公开仓库历史缓存需 GitHub Support 才能彻底清除。
+
+【Git】
+commit: （本轮文档更新）
+push: 待执行 origin main
+
+【下一步】
+1. 提醒并跟进用户更换服务器口令。
+2. 如需覆盖 Alpine/OpenRC 与 ARM64，另找对应主机补测并回填本文件。
+3. 用户若把 Dashboard 的 Public Hostname 改到别的地址，记得同步 `yjl configure --target`，
+   避免本机记录与云端不一致造成误判。
+
