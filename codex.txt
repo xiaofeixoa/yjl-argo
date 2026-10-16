@@ -89,8 +89,8 @@ YJL Argo Tunnel（yjl-argo）— AI 开发上下文档案
 - 本机为 Windows，工具面向 Linux（systemd/OpenRC），无法在本机验证真实隧道；只能做语法与逻辑测试。
 
 【Git】
-commit:（首次提交后回填）
-push:未推送（待确认）
+commit: 4a17eb2（chore: 从 dandan-tui 抽取 yjl-argo 为独立工程）
+push: 未推送（待用户确认远端仓库 xiaofeixoa/yjl-argo 与凭证）
 
 【下一步】
 1) 待用户确认后 git remote add origin 并 push 到 xiaofeixoa/yjl-argo。
