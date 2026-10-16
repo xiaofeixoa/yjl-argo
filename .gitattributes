@@ -1,0 +1,3 @@
+# 统一换行符：本仓库面向 Linux，全部文本使用 LF，
+# 避免在 Windows 检出时把 shell 脚本改成 CRLF 而无法执行。
+* text=auto eol=lf

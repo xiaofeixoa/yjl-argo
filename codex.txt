@@ -1,0 +1,141 @@
+====================================================================
+YJL Argo Tunnel（yjl-argo）— AI 开发上下文档案
+用法：每次开发工作“追加”记录，不覆盖历史。下一个 AI Agent 只需读本文件即可续接。
+====================================================================
+
+==================================================
+时间：2026-10-16
+版本：v0.1.0（首次独立化）
+==================================================
+
+【用户需求】
+用户有一个工程 dandan-tui（YJL Linux TUI），其中内置了 argo（Cloudflare Tunnel）管理功能。
+用户要求：
+1) 先调研 GitHub 上是否有类似工程；
+2) 把该 argo 管理功能单独拿出来，做成一个新的独立工程，方便自己使用。
+
+【产品经理】
+- 目标：把 dandan-tui 的 yjl-argo 子模块独立成一个单独的 GitHub 仓库，便于单独安装/维护/分发。
+- 定位由用户确认为「原样独立化」：行为与现状一致，不做功能增强，不换技术栈。
+- 安装方式由用户确认：保持 install.sh，不做 launch.sh 一行在线安装。
+- 命名由用户确认：全盘保留（命令 yjl、服务 yjl-argo、路径 /etc/yjl-argo 等）。
+- 仓库名 yjl-argo；本地就地以 D:\new-shell\wen\argo-yjl-dingzhi 作为仓库根。
+- 许可证 MIT，署名 xiaofeixoa。
+- 本次不加 GitHub Actions CI。
+- 交付范围：代码 + README + LICENSE + 文档四件套（设计.md/框架.txt/使用说明.md/codex.txt）+ git init 首次提交；
+  推送 GitHub 单独确认（需要凭证或仓库已存在）。
+
+【调研：GitHub 类似工程】
+- Misaka-blog/argo-script：CloudFlare Argo Tunnel 一键管理脚本。同为菜单式 bash 管理器，
+  偏“装 tunnel + 配 ingress”，不带 Token 多入口表管理。
+- cloudflare/cloudflared：官方客户端，底层依赖，非同类。
+- fscarmen/ArgoX、yonggekkk/argosbx、eooce/Argo：Argo + Xray/sing-box 代理隧道，定位不同
+  （跑 VLESS/VMess 代理协议）。
+- 各类“远程托管固定隧道脚本”博客方案：调用 Zero Trust API 自动建隧道，多为单次脚本。
+结论：**纯 cloudflared 隧道菜单管理器 + Token 模式 + 多 ingress 入口表 + systemd/OpenRC 双 init + 健康检查**
+这个组合，GitHub 上没有现成等价物，值得独立成工程。
+
+【首席架构师】
+- yjl-argo 本身已是自包含 bash 程序，仅依赖 cloudflared + bash，
+  明确不装 sing-box，与 dandan-tui 主工程几乎零耦合，抽取门槛低。
+- 抽取策略：从 raw.githubusercontent.com 逐字节拉取源文件，用 git blob SHA 校验一致性。
+- 目标仓库结构（仓库根 = 当前目录 argo-yjl-dingzhi）：
+    yjl-argo.sh / install.sh / tests/{test.sh,fake-cloudflared.sh}  ← 逐字节复制
+    README.md（重写为独立文档，保留测试断言句）/ LICENSE / .gitignore
+    AGENTS.md（保留）/ 设计.md / 框架.txt / 使用说明.md / codex.txt
+
+【资深研发】
+1) 环境确认：本机（Windows）默认不能直连 GitHub；用户开 VPN 后 raw.githubusercontent.com 可达。
+   本机 curl 被 PowerShell 别名占用，需用 curl.exe。
+   本机有 Git Bash 5.3 / sh / git 2.54。
+2) 抓取四个源文件到仓库根：
+   - yjl-argo.sh            (23417 B)
+   - install.sh             (1409 B)
+   - tests/test.sh          (3371 B)
+   - tests/fake-cloudflared.sh (164 B)
+3) 用 git hash-object 校验，四个 blob SHA 与原仓库 API 返回完全一致（见测试结果）。
+4) 改写 README.md：以原 yjl-argo/README.md 为底稿，去掉 dandan-tui 语境，补仓库地址、目录结构、
+   许可证章节；保留 “本工具当前不保存 Cloudflare API Token” 等被测试断言的字符串。
+5) 新增 LICENSE（MIT，Copyright (c) 2026 xiaofeixoa）、.gitignore。
+6) 新增文档四件套：设计.md / 框架.txt / 使用说明.md / codex.txt。
+
+【测试】
+测试环境：
+- 本机 Windows + Git Bash 5.3.9 (x86_64-pc-cygwin) + git 2.54.0.windows.1
+- 源文件来自 https://raw.githubusercontent.com/xiaofeixoa/dandan-tui/main/yjl-argo/
+
+测试命令（结果见下）：
+  git hash-object yjl-argo.sh install.sh tests/test.sh tests/fake-cloudflared.sh
+  bash -n yjl-argo.sh
+  sh -n install.sh
+  bash -n tests/test.sh
+  bash tests/test.sh
+
+【本次修改】
+- 新建独立仓库文件：yjl-argo.sh、install.sh、tests/test.sh、tests/fake-cloudflared.sh（逐字节复制）
+- 新建：README.md、LICENSE、.gitignore、设计.md、框架.txt、使用说明.md、codex.txt
+
+【测试结果】
+（见下方“验证记录”）
+
+【发现的问题】
+（见下方“验证记录”）
+
+【修复】
+-
+
+【未解决】
+- GitHub 推送需用户确认（凭证 / 远端仓库 xiaofeixoa/yjl-argo 是否已创建）。
+- 本机为 Windows，工具面向 Linux（systemd/OpenRC），无法在本机验证真实隧道；只能做语法与逻辑测试。
+
+【Git】
+commit:（首次提交后回填）
+push:未推送（待确认）
+
+【下一步】
+1) 待用户确认后 git remote add origin 并 push 到 xiaofeixoa/yjl-argo。
+2) 在真实 Debian/Ubuntu 与 Alpine 上跑一遍 `sudo sh install.sh` + `yjl`，记录实测结果追加到本文件。
+3) 如需，再评估是否加 GitHub Actions CI 与 launch.sh 一行安装。
+
+====================================================================
+
+## 验证记录（2026-10-16）
+
+### 1. 源文件逐字节一致性（git blob SHA）
+| 文件 | 本地 blob sha | 原仓库预期 | 结果 |
+| --- | --- | --- | --- |
+| yjl-argo.sh | 7fbe85b9f123820de4c68457b6c04abdcd9980a1 | 7fbe85b9f123820de4c68457b6c04abdcd9980a1 | PASS |
+| install.sh | d2e2d1c7925589f1ed5355de6f54134a2e91e67b | d2e2d1c7925589f1ed5355de6f54134a2e91e67b | PASS |
+| tests/test.sh | 2f464e072abeefad89547a1599981c466d3288b0 | 2f464e072abeefad89547a1599981c466d3288b0 | PASS |
+| tests/fake-cloudflared.sh | 50f0d918da0c1646b43b5fee983458d8ca6e8986 | 50f0d918da0c1646b43b5fee983458d8ca6e8986 | PASS |
+
+### 2. 语法 / 功能测试
+环境：Windows + Git Bash 5.3.9 (x86_64-pc-cygwin) + git 2.54.0.windows.1
+
+| 命令 | 结果 | 结论 |
+| --- | --- | --- |
+| bash -n yjl-argo.sh | exit 0 | PASS |
+| sh -n install.sh | exit 0 | PASS |
+| bash -n tests/test.sh | exit 0 | PASS |
+| bash -n tests/fake-cloudflared.sh | exit 0 | PASS |
+| bash tests/test.sh | exit 1 | 见下（环境限制） |
+
+**问题**：cygwin 在本机文件系统上无法 chmod，上游测试夹具里的 `install -d -m 700`
+报 `Permission denied`。参数拼装、源码契约断言、README 断言三段在失败前均已通过。
+
+**修复（验证手段，不修改交付物）**：用导出的 shell 函数桩掉 `install`/`chmod`，
+在无权限语义的 Windows 上重跑完整测试：
+
+    bash -c 'install() { mkdir -p "$4"; }; chmod() { return 0; }; export -f install chmod; bash tests/test.sh'
+
+**结果**：`All YJL Argo tests passed.`（安装集成测试因非 root 按设计跳过）
+
+**补充**：另用等价脚本单独验证路由表增删改逻辑（临时目录 + 桩），
+`routes.tsv` 实测内容为 `panel\tpanel.example.com\t/admin\thttp://127.0.0.1:8081\tno`，
+与预期逐字节一致 → PASS。
+
+**本机无法验证的部分（如实记录）**：
+- 权限位（config.env/routes.tsv 600、安装产物 755）——Windows 无 POSIX 权限语义；
+- 真实 systemd / OpenRC 服务拉起与开机自启；
+- 真实 Cloudflare 隧道连通性与公网健康检查。
+以上需在真实 Debian/Ubuntu 与 Alpine 主机上补测。

@@ -1,0 +1,113 @@
+====================================================================
+YJL Argo Tunnel（yjl-argo）— 框架说明
+====================================================================
+
+一、整体架构
+--------------------------------------------------------------------
+                        ┌──────────────────────────────┐
+                        │   Cloudflare 边缘 (HTTPS/WSS) │
+                        └───────────────▲──────────────┘
+                                        │  Tunnel（出站长连接，无需开公网端口）
+                        ┌───────────────┴──────────────┐
+                        │        cloudflared 进程        │
+                        │  --no-autoupdate --protocol http2
+                        │  --metrics 127.0.0.1:20241     │
+                        └───────────────▲──────────────┘
+                                        │ 由 yjl-argo 托管为系统服务
+                        ┌───────────────┴──────────────┐
+                        │            yjl-argo            │
+                        │  systemd / OpenRC 服务         │
+                        │  读取 config.env + routes.tsv  │
+                        └───────────────┬──────────────┘
+                                        │ 反向代理到本地
+                        ┌───────────────▼──────────────┐
+                        │ 本机 HTTP / WebSocket 服务     │
+                        │ 例如 127.0.0.1:8080 / :9000    │
+                        └──────────────────────────────┘
+
+二、文件与模块关系
+--------------------------------------------------------------------
+yjl-argo.sh
+├── 常量区        APP_NAME / APP_DIR(/etc/yjl-argo) / CONFIG_FILE / ROUTES_FILE
+│                 LOG_FILE(/var/log/yjl-argo.log) / BIN_DIR(/usr/local/bin)
+│                 CLOUDFLARED / SERVICE_NAME(yjl-argo) / METRICS_ADDR(/127.0.0.1:20241)
+│                 SYSTEMD_UNIT / OPENRC_UNIT / SCRIPT_PATH
+├── 输出与工具    say / ok / warn / err / line / pause / command_exists / require_root
+├── 初始化检测    init_type(systemd|openrc|unknown)
+├── 配置层        load_config（逐行键值解析，不 source）
+│                 write_config（umask 077，写 600 的 config.env）
+│                 valid_target / valid_hostname / valid_public_path
+├── 路由表层      route_rows / route_id_valid / route_exists / route_get
+│                 route_add_or_update / route_remove / print_routes
+│                 route_health_checks / discover_quick_url / ensure_legacy_route
+├── 服务层        write_service / service_exists / service_enable_start
+│                 service_stop_disable / service_restart / service_state
+├── 运行时        run_tunnel（exec cloudflared ...，供服务调用）
+├── 诊断          status / show_log / hostname_check / target_check
+│                 metrics_connections / current_run_has_connection / cloudflare_dns_hint
+├── 安装/卸载     install_deps / cloudflared_arch / install_cloudflared
+│                 ensure_cloudflared / update_cloudflared / uninstall_local
+└── 交互          configure_tunnel / route_menu / configure_route_interactive / menu
+                  + 子命令分发（menu|run|status|install-cloudflared）
+
+install.sh
+└── 校验 root → 定位同目录的 yjl-argo.sh → 安装到 /usr/local/lib/yjl-argo
+    → 软链 /usr/local/bin/yjl；Alpine 无 bash 时先 bootstrap bash
+
+tests/test.sh
+└── ROOT_DIR = tests/ 的上级（= 仓库根）
+    ├── 参数拼装测试：用 tests/fake-cloudflared.sh 冒充 cloudflared，
+    │   抓取 quick / token 两种模式实际传入的参数并断言
+    ├── 源码契约断言：关键字符串（服务单元字段、分发、入口表文案）存在
+    ├── 路由表测试：source 主程序后调用 route_add_or_update / route_remove，
+    │   断言 routes.tsv 的增删改结果
+    ├── README 断言：必须包含"本工具当前不保存 Cloudflare API Token"
+    └── 安装集成测试：root 下用临时安装目录跑 install.sh 并断言软链/权限
+
+三、数据流
+--------------------------------------------------------------------
+1) 首次配置（菜单 1）
+   configure_tunnel
+     ├─ 选 quick  → MODE=quick，无 Token
+     └─ 选 token  → read -s 读 Token；校验 hostname/path 合法性
+     ├─ write_config  → /etc/yjl-argo/config.env (600)
+     ├─ [token]  route_add_or_update default 域名 路径 目标 yes → routes.tsv (600)
+     ├─ write_service  → systemd unit 或 OpenRC 脚本
+     ├─ service_enable_start → 启动并开机自启
+     └─ status → 立即回显状态
+
+2) 运行时（服务拉起）
+   systemd ExecStart=<script> run  /  OpenRC command=<script> command_args="run"
+     → run_tunnel 读 config.env；若 TOKEN 模式且无 TARGET 则从 routes.tsv 取首个启用入口
+     → exec cloudflared <common flags> tunnel [run --token ...] >> LOG_FILE 2>&1
+
+3) 状态与健康检查（菜单 2 / yjl status）
+   load_config → service_state → ps 统计 cloudflared 进程
+   → curl http://127.0.0.1:20241/metrics 汇总 HA 连接数
+   → route_health_checks 逐条 GET https://<host><path>，按 2xx/4xx=通、5xx=回源失败、其它=待确认
+   → cloudflare_dns_hint 检查 region1.v2.argotunnel.com 是否被解析成 fake-IP
+
+四、部署关系
+--------------------------------------------------------------------
+宿主：Debian / Ubuntu / Alpine（root 运行）
+安装产物：
+  /usr/local/lib/yjl-argo/yjl-argo.sh     主程序
+  /usr/local/bin/yjl                      软链 → 主程序
+  /etc/systemd/system/yjl-argo.service    或 /etc/init.d/yjl-argo
+运行数据：
+  /etc/yjl-argo/config.env                模式/目标/Token/协议（600）
+  /etc/yjl-argo/routes.tsv                Token 多入口清单（600）
+  /var/log/yjl-argo.log                   cloudflared 输出（600）
+可选：
+  /usr/local/bin/cloudflared              install/update 时下载（按 uname -m 选架构）
+
+卸载（菜单 6 / uninstall_local）：停服务 → 删服务单元 → 删 /etc/yjl-argo 与日志。
+不触碰 Cloudflare Dashboard 内的 Tunnel。
+
+五、网络结构
+--------------------------------------------------------------------
+- 出站：cloudflared 主动连 Cloudflare 边缘（HTTP/2 over TCP 7844 回退；无需要开入站端口）。
+- 本地回源：cloudflared → 127.0.0.1:PORT 或 [::1]:PORT 的本机服务。
+- 控制面：Dashboard 配置 Public Hostname / Ingress；远端规则优先于命令行 --url。
+- 已知网络陷阱：若 <区域>.v2.argotunnel.com 被本地 DNS 解析为 198.18.x.x（fake-IP），
+  状态页给出警告，需用真实 DNS 或正确网关路由解决；本工具不修改宿主网络配置。
