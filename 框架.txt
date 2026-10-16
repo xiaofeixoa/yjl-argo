@@ -162,3 +162,29 @@ tests/test.sh
 - 开发机侧陷阱（2026-10-16 实测）：本机 Bettbox(Clash Meta) TUN 用 176.0.0.0/4 等 metric-0
   路由接管全部出站；对目标 IP 加 /32 主机路由或绑定物理网卡均无法绕过（WFP 层拦截），
   需在该客户端里把目标 IP 设为直连/bypass，或临时关闭 TUN。
+
+六、宿主机网络栈（第四轮调优，非工具功能）
+--------------------------------------------------------------------
+> 以下是**参考服务器**上的宿主机配置，不是 yjl-argo 的组件，安装工具不会改动它。
+
+  ┌─────────────────────── 宿主机内核与网络栈 ───────────────────────┐
+  │ XanMod LTS 6.18.57 x64v2   ← BBRv3 内置(CONFIG_DEFAULT_TCP_CONG=bbr)│
+  ├──────────────────────────────────────────────────────────────────┤
+  │ net.core.default_qdisc = fq        ← ens3 root qdisc              │
+  │ net.ipv4.tcp_congestion_control = bbr                             │
+  │ rmem_max/wmem_max = 12MiB          ← 2×BDP@150ms 与 RAM/32 取小    │
+  │ somaxconn / backlog / fastopen / slow_start_after_idle / mtu_probing│
+  ├──────────────────────────────────────────────────────────────────┤
+  │ /swapfile 1GB (swappiness=10)      ← OOM 保险，非性能特性         │
+  ├──────────────────────────────────────────────────────────────────┤
+  │ 配置：/etc/sysctl.d/99-yjl-net.conf                               │
+  │       /etc/modules-load.d/yjl-net.conf                            │
+  │ 回滚：/root/net-tuning/restore.sh + kernel-rollback.sh            │
+  └──────────────────────────────────────────────────────────────────┘
+
+  实测（受控 A/B，严格 cubic/bbr 交替 + 取中位数）：
+    BBRv3 vs cubic @ CF 4.7ms = +0.1% / @ 东京 250ms = +3.5% / @ 悉尼 280ms = +1.8%
+    调优缓冲 vs 内核默认（上传 6 轮） = −5.9%
+  → 结论：在**本机这种优质短 RTT 链路**上无可测吞吐提升；保留理由是健壮性（高丢包/多流），
+    不是"提速"。跨洲链路的瓶颈在远端与中间链路，不在本机。
+  明确不动：tcp_mem（内存安全阀）、网卡 offload、RPS/RFS、IRQ 亲和。
