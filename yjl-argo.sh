@@ -599,6 +599,121 @@ configure_tunnel() {
   fi
 }
 
+configure_usage() {
+  cat <<'EOF'
+非交互配置（供 launch.sh 一行安装调用）：
+
+  yjl configure --target URL [选项]
+
+选项：
+  --target URL          本地目标地址，必填，例 http://127.0.0.1:8080
+  --mode quick|token    隧道类型，默认 quick
+  --token TOKEN         命名隧道 Token（--mode token 时必填）
+  --hostname HOST       自有完整域名，例 panel.example.com
+  --path PATH           Dashboard 路径匹配，默认 /
+  --protocol http2|quic 传输协议，默认 http2
+  --no-start            只写配置和服务，不立即启动
+  -h, --help            显示本帮助
+
+上述选项也可用环境变量提供：YJL_ARGO_TARGET / YJL_ARGO_MODE / YJL_ARGO_TOKEN /
+YJL_ARGO_HOSTNAME / YJL_ARGO_PATH / YJL_ARGO_PROTOCOL。
+命令行参数优先于环境变量。
+EOF
+}
+
+configure_noninteractive() {
+  local target='' mode='' token='' hostname='' path='' protocol='' start=yes
+  local target_set=0 mode_set=0 token_set=0 hostname_set=0 path_set=0 protocol_set=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --target) target=${2:-}; target_set=1; shift 2 ;;
+      --mode) mode=${2:-}; mode_set=1; shift 2 ;;
+      --token) token=${2:-}; token_set=1; shift 2 ;;
+      --hostname) hostname=${2:-}; hostname_set=1; shift 2 ;;
+      --path) path=${2:-}; path_set=1; shift 2 ;;
+      --protocol) protocol=${2:-}; protocol_set=1; shift 2 ;;
+      --no-start) start=no; shift ;;
+      -h|--help) configure_usage; return 0 ;;
+      *) err "未知参数：$1"; configure_usage; return 2 ;;
+    esac
+  done
+
+  # 命令行未给出的项，回退到环境变量
+  (( target_set )) || target=${YJL_ARGO_TARGET:-}
+  (( mode_set )) || mode=${YJL_ARGO_MODE:-}
+  (( token_set )) || token=${YJL_ARGO_TOKEN:-}
+  (( hostname_set )) || hostname=${YJL_ARGO_HOSTNAME:-}
+  (( path_set )) || path=${YJL_ARGO_PATH:-}
+  (( protocol_set )) || protocol=${YJL_ARGO_PROTOCOL:-}
+
+  mode=${mode:-quick}
+  protocol=${protocol:-http2}
+  path=${path:-/}
+
+  case "$mode" in
+    quick|token) ;;
+    *) err "无效的 --mode：${mode}（只能是 quick 或 token）"; return 2 ;;
+  esac
+  case "$protocol" in
+    http2|quic) ;;
+    *) err "无效的 --protocol：${protocol}（只能是 http2 或 quic）"; return 2 ;;
+  esac
+  valid_target "$target" || { err "无效或缺失的 --target：${target:-<空>}（必须是 http:// 或 https:// 且不含空格）"; return 2; }
+  valid_public_path "$path" || { err "无效的 --path：${path}（必须以 / 开头，或留空）"; return 2; }
+  if [[ "$mode" == token ]]; then
+    [[ -n "$token" ]] || { err '--mode token 需要 --token（或环境变量 YJL_ARGO_TOKEN）。'; return 2; }
+  fi
+  if [[ -n "$hostname" ]]; then
+    valid_hostname "$hostname" || { err "无效的 --hostname：${hostname}（只填完整域名，不带 https:// 或路径）"; return 2; }
+  fi
+
+  require_root || return
+  ensure_cloudflared || return
+  load_config
+
+  MODE=$mode
+  TARGET=$target
+  PROTOCOL=$protocol
+  QUICK_URL=''
+  if [[ "$mode" == token ]]; then
+    [[ -n "$token" ]] && TOKEN=$token
+    PUBLIC_HOSTNAME=$hostname
+    PUBLIC_PATH=$path
+  else
+    TOKEN=''
+    PUBLIC_HOSTNAME=''
+    PUBLIC_PATH=''
+  fi
+
+  line
+  say '非交互配置 yjl-argo'
+  write_config
+  if [[ "$MODE" == token && -n "$PUBLIC_HOSTNAME" ]]; then
+    route_add_or_update default "$PUBLIC_HOSTNAME" "${PUBLIC_PATH:-/}" "$TARGET" yes
+    say '请确保 Cloudflare Dashboard -> Tunnel -> Public Hostname 有相同的域名/路径，并指向相同本地目标。'
+  fi
+  write_service
+
+  if [[ "$start" == yes ]]; then
+    target_check || true
+    service_enable_start
+    sleep 3
+  else
+    warn '已按 --no-start 写入配置，未启动服务。可用 yjl 进入菜单后再启动。'
+  fi
+  status
+  if [[ "$start" == yes ]]; then
+    if [[ "$MODE" == quick ]]; then
+      local url
+      url=$(discover_quick_url)
+      if [[ -n "$url" ]]; then ok "临时隧道已创建：${url}"; else warn '隧道正在建立，请稍后用 yjl status 读取临时域名。'; fi
+    else
+      ok '命名隧道已启动。'
+    fi
+  fi
+}
+
 restart_tunnel() {
   require_root || return
   service_exists || { err '尚未创建 yjl-argo 服务。'; return 1; }
@@ -670,6 +785,15 @@ case "${1:-menu}" in
   menu) menu ;;
   run) run_tunnel ;;
   status) status ;;
+  configure) shift; configure_noninteractive "$@" ;;
   install-cloudflared) install_cloudflared ;;
+  -h|--help)
+    say "${APP_NAME} 命令行用法："
+    say '  yjl                       打开交互菜单（默认）'
+    say '  yjl status                查看当前状态'
+    say '  yjl run                   前台运行隧道（用于调试）'
+    say '  yjl install-cloudflared   仅安装/更新 cloudflared'
+    say '  yjl configure [选项]      非交互配置（详见：yjl configure --help）'
+    ;;
   *) err "未知参数：$1"; exit 2 ;;
 esac

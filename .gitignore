@@ -9,3 +9,8 @@ Thumbs.db
 *.tmp
 /tmp/
 _upstream-*
+
+# 本地 AI 助手指令文件：含本机环境信息与口令，禁止入库
+AGENTS.md
+CLAUDE.md
+.codex/

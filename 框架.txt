@@ -27,6 +27,16 @@ YJL Argo Tunnel（yjl-argo）— 框架说明
 
 二、文件与模块关系
 --------------------------------------------------------------------
+launch.sh（一行安装入口，与主程序解耦）
+├── 参数解析      --ref / --repo / --source / --no-verify / --dry-run / -h
+│                 其余参数原样转发给 `yjl configure`
+├── 取件          fetch  → 在线：curl ${RAW_BASE}/<file>
+│                         离线：cp ${LOCAL_SOURCE}/<file>（--source）
+│                 下载件：yjl-argo.sh / install.sh / SHA256SUMS → 临时 staging 目录
+├── 校验          verify_checksums → sha256sum|shasum|openssl 逐个比对
+├── 安装          bash ${STAGING}/install.sh（复用安装器，不重复实现）
+└── 配置          无参数 → 进 `yjl` 菜单；有参数 → `yjl configure <原样转发的参数>`
+
 yjl-argo.sh
 ├── 常量区        APP_NAME / APP_DIR(/etc/yjl-argo) / CONFIG_FILE / ROUTES_FILE
 │                 LOG_FILE(/var/log/yjl-argo.log) / BIN_DIR(/usr/local/bin)
@@ -47,12 +57,17 @@ yjl-argo.sh
 │                 metrics_connections / current_run_has_connection / cloudflare_dns_hint
 ├── 安装/卸载     install_deps / cloudflared_arch / install_cloudflared
 │                 ensure_cloudflared / update_cloudflared / uninstall_local
-└── 交互          configure_tunnel / route_menu / configure_route_interactive / menu
-                  + 子命令分发（menu|run|status|install-cloudflared）
+└── 交互与子命令  configure_tunnel / configure_noninteractive(+configure_usage)
+                  / route_menu / configure_route_interactive / menu
+                  + 子命令分发（menu|run|status|configure|install-cloudflared|--help）
 
 install.sh
 └── 校验 root → 定位同目录的 yjl-argo.sh → 安装到 /usr/local/lib/yjl-argo
     → 软链 /usr/local/bin/yjl；Alpine 无 bash 时先 bootstrap bash
+
+SHA256SUMS + scripts/regen-sha256sums.sh
+└── 记录 yjl-argo.sh / install.sh / launch.sh / tests/*.sh 的 sha256；
+    改文件后必须 bash scripts/regen-sha256sums.sh 重新生成，否则一行安装会校验失败
 
 tests/test.sh
 └── ROOT_DIR = tests/ 的上级（= 仓库根）
@@ -61,12 +76,28 @@ tests/test.sh
     ├── 源码契约断言：关键字符串（服务单元字段、分发、入口表文案）存在
     ├── 路由表测试：source 主程序后调用 route_add_or_update / route_remove，
     │   断言 routes.tsv 的增删改结果
+    ├── configure 测试：参数校验（非法 mode / 缺 token 必须拒绝）、
+    │   环境变量回退、写 config.env + routes.tsv、触发服务启动
+    ├── 一行入口测试：launch.sh --help / --source . --dry-run
+    ├── 清单一致性：sha256sum -c SHA256SUMS 必须与工作区一致
     ├── README 断言：必须包含"本工具当前不保存 Cloudflare API Token"
     └── 安装集成测试：root 下用临时安装目录跑 install.sh 并断言软链/权限
 
 三、数据流
 --------------------------------------------------------------------
-1) 首次配置（菜单 1）
+0) 一行安装（用户 2026-10-16 追加的入口）
+   sudo bash <(curl -fsSL .../launch.sh) [--target ... --mode token --token ... --hostname ... --path ...]
+     ├─ 解析：launch.sh 自己的开关（--ref/--repo/--source/--dry-run/--no-verify）
+     │        其余参数进 FORWARD 数组
+     ├─ 取件：curl raw.githubusercontent.com/<repo>/<ref>/{yjl-argo.sh,install.sh,SHA256SUMS}
+     │        或（--source）直接 cp 本地文件；写入 mktemp -d 的 staging 目录
+     ├─ 校验：sha256sum 逐个比对 SHA256SUMS（--no-verify 可跳过；无可用的 sha 工具则警告跳过）
+     ├─ --dry-run → 到此处结束，不安装
+     ├─ 安装：bash staging/install.sh（root 校验在此处生效）
+     └─ 分支：FORWARD 为空 → exec `yjl`（菜单）
+                FORWARD 非空 → `yjl configure $FORWARD` → 见下面 1b)
+
+1a) 首次配置（菜单 1）
    configure_tunnel
      ├─ 选 quick  → MODE=quick，无 Token
      └─ 选 token  → read -s 读 Token；校验 hostname/path 合法性
@@ -75,6 +106,20 @@ tests/test.sh
      ├─ write_service  → systemd unit 或 OpenRC 脚本
      ├─ service_enable_start → 启动并开机自启
      └─ status → 立即回显状态
+
+1b) 非交互配置（yjl configure / 一行安装带参）
+   configure_noninteractive "$@"
+     ├─ 解析 --target/--mode/--token/--hostname/--path/--protocol/--no-start
+     ├─ 未给出的项回退到 YJL_ARGO_* 环境变量（命令行优先）
+     ├─ 纯参数校验：mode ∈ {quick,token}、protocol ∈ {http2,quic}、
+     │             target 必须 http(s):// 且无空格、path 必须以 / 开头或留空、
+     │             token 模式必须能拿到 Token、hostname 存在时必须合法
+     │             —— 校验阶段不需要 root，失败返回 2，便于脚本提前告警
+     ├─ require_root → ensure_cloudflared → load_config（继承已有 Token）
+     ├─ 写 MODE/TARGET/TOKEN/PROTOCOL/PUBLIC_HOSTNAME/PUBLIC_PATH
+     ├─ write_config；token 模式且有域名 → route_add_or_update default ...
+     ├─ write_service；（非 --no-start）target_check + service_enable_start + status
+     └─ quick 模式额外从日志里提取 trycloudflare 临时域名回显
 
 2) 运行时（服务拉起）
    systemd ExecStart=<script> run  /  OpenRC command=<script> command_args="run"
@@ -109,5 +154,11 @@ tests/test.sh
 - 出站：cloudflared 主动连 Cloudflare 边缘（HTTP/2 over TCP 7844 回退；无需要开入站端口）。
 - 本地回源：cloudflared → 127.0.0.1:PORT 或 [::1]:PORT 的本机服务。
 - 控制面：Dashboard 配置 Public Hostname / Ingress；远端规则优先于命令行 --url。
+- 注册表：DNS CNAME <tunnel-id>.cfargotunnel.com；隧道未连时公网返回 HTTP 530 / error code 1033。
+- 一行安装的网络路径：launch.sh → raw.githubusercontent.com（免费 CDN）；
+  目标机只需能出网访问 443 即可；不能出网则走 --source 离线安装。
 - 已知网络陷阱：若 <区域>.v2.argotunnel.com 被本地 DNS 解析为 198.18.x.x（fake-IP），
   状态页给出警告，需用真实 DNS 或正确网关路由解决；本工具不修改宿主网络配置。
+- 开发机侧陷阱（2026-10-16 实测）：本机 Bettbox(Clash Meta) TUN 用 176.0.0.0/4 等 metric-0
+  路由接管全部出站；对目标 IP 加 /32 主机路由或绑定物理网卡均无法绕过（WFP 层拦截），
+  需在该客户端里把目标 IP 设为直连/bypass，或临时关闭 TUN。

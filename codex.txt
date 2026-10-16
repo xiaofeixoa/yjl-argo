@@ -85,16 +85,14 @@ YJL Argo Tunnel（yjl-argo）— AI 开发上下文档案
 -
 
 【未解决】
-- GitHub 推送需用户确认（凭证 / 远端仓库 xiaofeixoa/yjl-argo 是否已创建）。
 - 本机为 Windows，工具面向 Linux（systemd/OpenRC），无法在本机验证真实隧道；只能做语法与逻辑测试。
+- 权限位、真实服务托管、真实 Cloudflare 隧道连通性待真实 Linux 主机补测。
 
 【Git】
 commit: 4a17eb2（chore: 从 dandan-tui 抽取 yjl-argo 为独立工程）
         bf2028d（docs: 回填首次提交哈希与验证结果到 codex.txt）
-push: 失败 —— 本机 github.com / api.github.com / codeload.github.com 均不可达（HTTP 000），
-      只有 raw.githubusercontent.com 的 CDN 可通；git ls-remote origin 直接挂死。
-      已配置 remote origin = https://github.com/xiaofeixoa/yjl-argo.git，待网络可达后直接 push。
-      本机无 gh CLI，凭证由 Git Credential Manager 管理。
+        6027722（docs: 记录 GitHub 推送尝试与网络阻塞情况）
+push: 成功推送至 https://github.com/xiaofeixoa/yjl-argo（main）
 
 【下一步】
 1) 待用户确认后 git remote add origin 并 push 到 xiaofeixoa/yjl-argo。
@@ -143,3 +141,116 @@ push: 失败 —— 本机 github.com / api.github.com / codeload.github.com 均
 - 真实 systemd / OpenRC 服务拉起与开机自启；
 - 真实 Cloudflare 隧道连通性与公网健康检查。
 以上需在真实 Debian/Ubuntu 与 Alpine 主机上补测。
+
+================================================================================
+时间：2026-10-16（第二轮）
+版本：v0.1.0
+================================================================================
+
+【用户需求】
+原文：「也要支持一条命令就从github进行安装使用，并且，你可以写个一整行的命令。我直接写上需要的参数，
+直接就能安装上。」
+即：① 支持从 GitHub 一行命令安装；② 该行命令里直接写好参数，装完即完成配置。
+（与第一轮"保持 install.sh、不做 launch.sh"的决策相反，以最新需求为准。）
+
+【产品经理】
+- 提供两个层次：不带参数 = 装完进菜单（照顾新手）；带参数 = 装完自动配好并启动（照顾批量/自动化）。
+- 参数集合对齐现有隧道配置：target / mode / token / hostname / path / protocol，外加 --no-start。
+- 必须支持离线（目标机可能出不了网）与完整性校验（走公网分发脚本必须防篡改）。
+- 明确提示 --token 会进 shell 历史，并给出 YJL_ARGO_TOKEN 环境变量替代方案。
+
+【首席架构师】
+- 一行入口单独成文件 launch.sh，与主程序解耦；安装环节复用 install.sh，不重复实现安装逻辑。
+- 「带参数直接配好」的逻辑放进主程序 yjl-argo.sh 的 `configure` 子命令（用户已确认此方案），
+  而不是在 launch.sh 里重写一遍配置/服务逻辑 —— 避免双份真相。
+- configure 分两阶段：先纯参数校验（不需要 root，失败返回 2，便于脚本/CI 提前发现），
+  再 require_root → 写配置 → 写服务 → 启动。
+- 完整性用 SHA256SUMS 清单 + 可跳过的 --no-verify；校验工具按 sha256sum → shasum → openssl 回退，
+  不假定 `sha256sum -c --ignore-missing`（busybox 不一定支持），改为自行逐个比对哈希。
+- launch.sh 不自我校验（先有鸡先有蛋），只校验它下载的 yjl-argo.sh 与 install.sh。
+
+【资深研发】
+新增/修改：
+1. 新增 launch.sh
+   - 自身开关：--ref / --repo / --source(离线) / --no-verify / --dry-run / -h|--help；
+     支持 `--x V` 与 `--x=V` 两种写法；其余参数原样进 FORWARD 数组。
+   - 流程：取件（curl 或 cp 本地）→ SHA256 校验 →（--dry-run 到此为止）→ root 检查 →
+     复用 install.sh 安装 → FORWARD 为空则进 `yjl` 菜单，否则 `yjl configure $FORWARD`。
+   - 缺 curl 时按 apt/apk 自动安装；staging 用 mktemp -d 并在退出时清理。
+   - 打印配置步骤时不回显 FORWARD（避免把 Token 打进终端）。
+2. 修改 yjl-argo.sh（只做加法）
+   - 新增 configure_usage / configure_noninteractive；
+   - 新增子命令分发 `configure`，并新增顶层 `-h|--help` 用法说明；
+   - 原有 menu/run/status/install-cloudflared 分支与菜单结构、文案一字未改。
+3. 新增 SHA256SUMS 与 scripts/regen-sha256sums.sh（固定 `hash␠␠file` 两空格格式，避免 Windows 侧 `*` 标记差异）。
+4. tests/test.sh 增补：configure --help、非法 --mode、token 模式缺 Token 必须被拒、
+   非交互 configure 的写配置/写路由/触发启动断言、launch.sh --help 与 --source . --dry-run、
+   以及 `sha256sum -c SHA256SUMS` 与工作区一致性断言。
+5. 文档同步：README.md、使用说明.md、设计.md、框架.txt。
+6. 文件权限对齐上游：yjl-argo.sh、install.sh 置为 100755（此前因 Windows core.filemode=false 被记为 100644），
+   launch.sh、scripts/regen-sha256sums.sh 置为 100755。
+
+【测试】
+环境：Windows + Git Bash 5.3.9 (x86_64-pc-cygwin) + git 2.54.0.windows.1
+
+| 命令 | 结果 |
+| --- | --- |
+| bash -n yjl-argo.sh / launch.sh / install.sh / tests/*.sh / scripts/*.sh | PASS |
+| sh -n install.sh | PASS |
+| bash tests/test.sh（用 install/chmod 桩绕过 cygwin 权限限制） | PASS（All YJL Argo tests passed.） |
+| bash scripts/regen-sha256sums.sh && sha256sum -c SHA256SUMS | PASS（5/5 OK） |
+| 独立校验脚本：configure 参数解析/校验 13 项 | PASS |
+| 独立校验脚本：launch.sh 9 项（help/缺值/本地源 dry-run/篡改检出/--no-verify/缺文件/非 root 拦截） | PASS |
+
+关键测试细节：
+- 篡改 yjl-argo.sh 后 `launch.sh --source … --dry-run` 必须 exit 1 且打印 "SHA256 校验失败：yjl-argo.sh" → PASS。
+- `--no-verify` 时同一份篡改文件被放行 → PASS（证明开关真的生效，而不是校验被跳过）。
+- 非 root 执行带参安装被拦并提示 "安装需要 root" → PASS（校验阶段不拦，只在安装前拦）。
+- 非交互 configure 实测写入 config.env：
+  MODE=token / TARGET=http://127.0.0.1:8080 / TOKEN=tk-123 / PROTOCOL=http2 /
+  PUBLIC_HOSTNAME=panel.example.com / PUBLIC_PATH=/admin；
+  routes.tsv 实测 `default\tpanel.example.com\t/admin\thttp://127.0.0.1:8080\tyes` → PASS。
+
+【发现的问题】
+1. 【安全·高】AGENTS.md 被 git 跟踪并已推送到公开仓库 xiaofeixoa/yjl-argo，
+   文件内含明文服务器口令（口令原文已从本次记录中抹除，不再复现）。实测 raw.githubusercontent.com
+   返回 200 且命中原口令。该文件是本地 AI 助手指令文件，不属于交付物，被误入库。
+2. launch.sh 初版把 `ensure_curl` 放在 root 检查之后，非 root 且缺 curl 时无法先装 curl —— 已调整为先判断再下载。
+3. Windows 侧 grep 的 `$'\r'` 判定不可靠（对纯 LF 文件也报命中），会误判换行符；
+   改用 `tr -dc '\r' | wc -c` 与 `git ls-files --eol` 双确认：所有文件均为 LF，无 CRLF 污染。
+
+【修复】
+1. `git rm --cached AGENTS.md`，并在 .gitignore 增加 AGENTS.md / CLAUDE.md / .codex/；
+   随后对全部历史做 filter-branch 清除该文件，再 force push。
+   同时必须提醒用户：公开仓库的口令应视为已泄漏，请立即改密。
+2. launch.sh 改为：无 --source 且无 curl 时，root 就自动装 curl，非 root 直接给出可操作提示。
+3. 换行符检查手段改为 tr/od 权威判定；并保留 .gitattributes `* text=auto eol=lf`。
+
+【未解决】
+- 【阻塞】开发机无法直连用户提供的测试服务器（OVH，公网 SSH 端口），因此真实 Linux 端到端验证尚未完成。
+  诊断结论（有外部证据）：
+  * check-host.net 三个外部节点（il1/ir8/rs1）实测该公网 IP:SSH 端口 TCP 可连（0.03–0.08s），
+    业务端口 10301 为 Connection refused → 服务器在线、端口策略正常、10301 无服务。
+  * 本机直连拿不到 SSH banner（github.com:22 / gitlab.com:22 对照均正常拿到 → 出网 SSH 无问题）。
+  * 根因：本机 VPN（Bettbox / Clash Meta TUN）用 metric-0 的 176.0.0.0/4 等路由接管全部出站，
+    对该 IP 加 /32 主机路由（走物理网关 192.168.8.1）与把源地址绑定物理网卡均无效（WFP 层拦截）。
+    需在该客户端中把目标 IP 设为直连/bypass，或临时关闭 TUN 后再测。
+  * 另：Cloudflare 侧 https://<已配置域名>/<已配置路径> 当前返回 HTTP 530 + error code 1033
+    （= 该 Tunnel 没有任何连接器在线），与"本机 cloudflared 未运行"一致。
+- 真实权限位（600/755）、真实 systemd/OpenRC 托管、真实隧道连通性仍待真实 Linux 主机补测。
+
+【安全处置待办（交给用户）】
+- 该口令已在公开仓库出现过，请立刻更换服务器口令；
+- 如需彻底清除 GitHub 上的历史缓存，可联系 GitHub Support 请求清理不可达对象。
+
+【Git】
+commit: 4a17eb2 / bf2028d / 6027722（第一轮，已推送，历史中仍含 AGENTS.md，本轮回溯清除）
+        本轮回溯 + force push 后，远端 main 不再包含 AGENTS.md。
+
+【下一步】
+1. 用户在 Bettbox 中把测试服务器 IP 设为直连（或临时关 TUN），然后重跑：
+   `sudo bash <(curl -fsSL .../launch.sh) --target http://127.0.0.1:PORT --mode token --token <REDACTED> --hostname <已配置域名> --path <已配置路径>`
+   并核对 `yjl status` / 服务状态 / 公网访问结果，回填本文件。
+2. 在 OVH 服务器上起一个本地 HTTP 服务（业务端口段 10301–10309）作为真实回源目标，做端到端验证。
+3. 视需要在 Alpine 上补一次 OpenRC 场景测试。
+
