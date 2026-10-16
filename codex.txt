@@ -90,7 +90,11 @@ YJL Argo Tunnel（yjl-argo）— AI 开发上下文档案
 
 【Git】
 commit: 4a17eb2（chore: 从 dandan-tui 抽取 yjl-argo 为独立工程）
-push: 未推送（待用户确认远端仓库 xiaofeixoa/yjl-argo 与凭证）
+        bf2028d（docs: 回填首次提交哈希与验证结果到 codex.txt）
+push: 失败 —— 本机 github.com / api.github.com / codeload.github.com 均不可达（HTTP 000），
+      只有 raw.githubusercontent.com 的 CDN 可通；git ls-remote origin 直接挂死。
+      已配置 remote origin = https://github.com/xiaofeixoa/yjl-argo.git，待网络可达后直接 push。
+      本机无 gh CLI，凭证由 Git Credential Manager 管理。
 
 【下一步】
 1) 待用户确认后 git remote add origin 并 push 到 xiaofeixoa/yjl-argo。
