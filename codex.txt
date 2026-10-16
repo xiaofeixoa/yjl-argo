@@ -781,11 +781,21 @@ push: 成功 —— git push origin main（b10a317..e487276）
 - 服务器口令仍未更换（第四轮遗留，与本次无关）。
 
 【Git】
-commit: （本次提交：修复回滚取备份逻辑 + README 说明 + codex 回填）
-push: 见下
+commit: 05e42fc（fix: 回滚取「首次」备份，避免污染回滚语义；回填真机验证记录）
+        改动：codex.txt / ovh优化/README.md / ovh优化/ovh优化.sh（3 文件，+101 −4）
+push: 成功 —— git push origin main（527c4b6..05e42fc）
+
+【远端独立复核（经 GitHub raw / ls-remote，非本地文件）】
+- git ls-remote origin refs/heads/main = 05e42fc… = 本地 HEAD（一致，工作区干净）
+- raw 重新拉取 ovh优化/ovh优化.sh（200，54083 字节）：
+  `sort | head -1` 命中 2 处（第 363、989 行），`sort | tail -1` 命中 0 处 → 修复确已上线
+- raw 重新拉取 codex.txt：含本次真机验证记录（“真机”命中 23 行）
+
+【用户决策（2026-10-16）】
+- 内核档 + 真回滚：**到此为止，先记录**（不在生产机冒险；待有一次性主机再验）。
 
 【下一步】
-1. 若用户同意，找一台可弃用 Debian 13 x86_64 主机，完整验证内核档、GRUB 安全网、重启自动回退与真回滚。
+1. 若用户提供一台可弃用 Debian 13 x86_64 主机，再完整验证内核档、GRUB 安全网、重启自动回退与真回滚。
 2. 可选：把受控 A/B 测试脚本补进 `ovh优化/`。
 
 
