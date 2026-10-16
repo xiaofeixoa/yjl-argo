@@ -592,3 +592,101 @@ push: 成功 —— git push origin main（0d3f180..05c0f8a）
 1. 提醒并跟进用户更换服务器口令（唯一遗留的安全项）。
 2. 若日后真的遇到"高丢包长 RTT"业务，可在那时补测 BBR 与缓冲的收益，用真实数据替换理论推断。
 
+================================================================================
+时间：2026-10-16（第五轮·把第四轮调优固化为可复现脚本：ovh优化/）
+版本：v0.1.0
+================================================================================
+
+【用户需求】
+原文：「目前优化的配置，内核升级的方法什么的都写个脚本，方便我后面重装后直接运行，
+你新建个目录就叫 ovh优化」。
+即：把第四轮那次宿主机调优（BBRv3 + 18 项 sysctl + fq + swap + XanMod 内核升级 + 重启安全网）
+固化成脚本，重装系统后可直接运行；目录名 `ovh优化`。
+
+【产品经理】
+- 第四轮那次调优的"真身"只存在于服务器 `/root/net-tuning/` 与本机临时目录，
+  仓库里只有散文式描述（使用说明.md 第十一节 / 设计.md / 框架.txt / codex.txt）——不可复用。
+- 目标交付：一个**自动探测、可一键回滚、绝不弄断正在用的隧道**的脚本集合，放 `ovh优化/`。
+- 经用户确认的四项决策：
+  ① 交付形态＝**单个交互式菜单脚本**（不是多个分步脚本，也不是两者都要）；
+  ② 可复用性＝**自动探测**（内核版本 / 网卡名 / GRUB menuentry ID / CPU 等级 v2·v3）；
+  ③ 目录＝**仓库内并随 git 提交**（脚本不含密钥/IP/Token，可公开）；
+  ④ 性能测试＝**只收录 net-bench 基准测试**，不收录受控 A/B（用户明确只要基准）。
+
+【首席架构师】
+- 素材来源（关键发现）：第四轮的真实脚本仍在开发机临时目录
+  `%TEMP%\opencode\net-step1.sh / net-step2-kernel.sh / net-grub-safety.sh /
+   net-prereboot-check.sh / net-postreboot.sh / net-finalize.sh / net-bench.sh` 等。
+  **以真实脚本为准**，而非从散文复原——避免失真。
+- 单文件内聚：所有步骤做成同一脚本里的函数，运行期产物（99-yjl-net.conf、restore.sh、
+  kernel-rollback.sh、promote-xanmod.sh）仍由脚本在服务器上生成到 `/root/net-tuning/`，与现状一致。
+- 自动探测替代原脚本的硬编码：`6.18.57`→从 /boot 探测最新 xanmod；`ens3`→默认路由网卡；
+  `6.12.107`→`uname -r`；menuentry ID→按内核版本在 grub.cfg 里 grep `-advanced-` 项。
+- 安全网与硬校验原样保留（这是第四轮最有价值的设计）：永久默认旧内核 + 一次性启动新内核；
+  重启前按"内核 config 的内置(=y)/模块(=m)形态"判断能否启动（不能假定 virtio/ext4 是 initrd 模块）。
+- 直接用**最终生效值**写 sysctl（`tcp_ecn=2`），因此把原 `net-finalize.sh` 合并进 step_net，
+  不再需要单独的 finalize 步骤。
+- 指纹用实测确认值 `D38D7D1DA1349567ADED882D86F7D09EE734E623`
+  （原 `xanmod-verify.sh` 里那个 `9C27…` 是错误猜值，已弃用）。
+
+【资深研发】
+新增：
+1. `ovh优化/ovh优化.sh`：单个交互式菜单脚本（含 9 个菜单项 + `--step` 非交互 + `--dry-run`）。
+   - 菜单 1 一键全套 / 2 网络参数 / 3 装内核 / 4 重启前校验 / 5 重启后验证 /
+     6 promote / 7 基准 / 8 回滚 / 9 状态。
+   - 自动探测：发行版代号、默认路由网卡、CPU 等级 v2/v3、GRUB menuentry ID。
+   - 所有改动前时间戳备份；生成 restore.sh / kernel-rollback.sh / promote-xanmod.sh。
+   - 每个 mutating 步骤需 root 且需确认（`--yes` 可跳过确认，但安全网与硬校验不跳）。
+   - 指纹校验：有 gpg 用 gpg，否则用 python3 独立复算（内嵌 OpenPGP v4 指纹算法），
+     都没有则要求人工确认；不匹配即中止。
+   - `--dry-run` 只探测/打印，不改系统（可安全在 Windows 本地试跑）。
+2. `ovh优化/README.md`：适用系统 / 用法 / 安全设计 / 回滚 / 实测结论 / 故障排查 / FAQ。
+文档同步：`使用说明.md` 第十一节加了指向 `ovh优化/` 的说明与回滚入口。
+
+【测试】
+环境：Windows 10 + Git Bash 5.3.9 (x86_64-pc-cygwin) + git 2.54（**无法在此验证真实调优/内核/重启**）。
+
+| 命令 | 结果 |
+| --- | --- |
+| `bash -n ovh优化/ovh优化.sh` | PASS（syntax OK） |
+| `--help`、`--step nope`(exit 2)、`--bogus`(exit 2) | PASS |
+| `--dry-run --step net` | PASS（打印将写入的 sysctl 全文，不改系统） |
+| `--dry-run --step kernel` | PASS（打印源/包/指纹计划，不改系统） |
+| `--dry-run --step grub` | PASS（打印安全网计划，不改系统） |
+| `--dry-run --step rollback --rollback net` | PASS |
+| 非 root 执行 mutating 步骤 | PASS（被拦，exit 1，提示需 root） |
+| 独立校验：脚本写出的 19 项 sysctl == 原 `net-finalize.sh` 的最终取值 | PASS（逐行 diff 完全一致） |
+| 独立校验：19 个被写入的键全部在备份/回滚 KEYS_LIST 中 | PASS（19/19 覆盖） |
+| 独立校验：`tcp_ecn` 最终值为 2 | PASS |
+| 文件编码/行尾：UTF-8 无 BOM + LF（CR=0） | PASS |
+| 回归：`bash tests/test.sh` | PASS（All YJL Argo tests passed.） |
+| 回归：`sha256sum -c SHA256SUMS` | PASS（5/5 OK，未改动安装链文件） |
+
+【发现的问题】
+1. `--dry-run` 在 kernel/grub/prereboot 三步曾因“先校验条件、后判 dry-run”而提前报错退出
+   （Windows 上无 XanMod 内核与 /etc/os-release，就看不到 dry-run 计划）。已调整顺序：
+   先打印 dry-run 计划，再做真实运行前的条件校验。
+2. 自写校验脚本的正则 `^(net|vm)\.[a-z0-9_]+ = ` 写错（`net.core.default_qdisc` 含两个点），
+   一度只匹配到 1 行、得到“假 PASS”。修正为 `[a-z0-9_.]+` 后 19 行全部比对通过。
+   —— 教训：校验脚本本身也要先自证，别把“没报错”当成“通过”。
+
+【修复】
+1. step_kernel / step_grub_safety / step_prereboot：把 dry-run 分支提到条件校验之前。
+2. emit_sysctl_conf 的 nproc/内存探测加默认值（非 Linux 下不显示空值）。
+3. 校验脚本正则修正后重跑，19/19 PASS。
+
+【未解决 / 未覆盖】
+- 【需真机补测】真实执行（写 sysctl / 装 XanMod / GRUB 安全网 / 重启 / 回滚）**无法在 Windows 验证**，
+  需在 Debian 13 x86_64 主机上按 README 步骤走一遍并回填本节。
+- Alpine / ARM64 仍不适用（XanMod 无对应包），已在 README 与 --help 中写明。
+- 服务器口令仍未更换（第四轮遗留，与本次无关）。
+
+【Git】
+commit:（本次提交见下）
+push:（待推送）
+
+【下一步】
+1. 在真实 Debian 13 主机上回归一遍 `ovh优化.sh`（至少 --dry-run 全步骤 + 菜单 2 档 1 实跑 + 回滚）。
+2. 若用户需要，再把受控 A/B 测试脚本也补进 `ovh优化/`（当前按用户选择未收录）。
+
+
