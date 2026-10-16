@@ -408,8 +408,20 @@ push: 成功 —— git push --force origin main
 - 【安全】此前泄漏的服务器口令仍需用户自行更换；公开仓库历史缓存需 GitHub Support 才能彻底清除。
 
 【Git】
-commit: （本轮文档更新）
-push: 待执行 origin main
+commit: fad3520 docs: 回填 OVH 真机端到端验证结果，补充非 HTTP 回源排查说明
+push: 成功 —— git push origin main（174dc0b..fad3520）
+      远端 HEAD = fad3520cc4e8072f13259c34cf47303ccd9575b0（与本地一致，工作区干净）
+
+【远端复核（独立，通过 GitHub raw 重新拉取，非本地文件）】
+- 可达性：launch.sh / yjl-argo.sh / install.sh / SHA256SUMS / codex.txt / 使用说明.md /
+  设计.md / 框架.txt / README.md / LICENSE 均 200；AGENTS.md 为 404（敏感文件已彻底移除）
+- 敏感扫描：codex.txt / 使用说明.md / 设计.md / 框架.txt / README.md / launch.sh /
+  yjl-argo.sh / install.sh 命中数**全部为 0**
+  （扫描项：服务器口令 / Tunnel Token / xboard Token / 服务器 IP / 面板域名 / 隧道域名 / Tunnel ID）
+- 完整性独立复核：用远端 SHA256SUMS 比对远端实际下载件，
+  yjl-argo.sh / install.sh / launch.sh 全部 OK —— 仓库清单与仓库内容自洽
+- 本地回归：`bash tests/test.sh` → All YJL Argo tests passed；
+  `sha256sum -c SHA256SUMS` → 5/5 OK（本轮只改文档，清单无需重生成）
 
 【下一步】
 1. 提醒并跟进用户更换服务器口令。
